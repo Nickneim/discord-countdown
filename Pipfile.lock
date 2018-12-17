@@ -1,0 +1,25 @@
+{
+    "_meta": {
+        "hash": {
+            "sha256": "e5bf3c65af76039aa9d0d8c3ff99e6815b56c1cf5f5e599625cd277cd09a5b10"
+        },
+        "pipfile-spec": 6,
+        "requires": {
+            "python_version": "3.6"
+        },
+        "sources": [
+            {
+                "name": "pypi",
+                "url": "https://pypi.org/simple",
+                "verify_ssl": true
+            }
+        ]
+    },
+    "default": {
+        "discord-py": {
+            "git": "https://github.com/Rapptz/discord.py",
+            "ref": "26bb6c6ddc9c141acdcc52e3728783525db2e2be"
+        }
+    },
+    "develop": {}
+}
