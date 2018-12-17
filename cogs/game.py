@@ -4,13 +4,13 @@ from discord.ext import commands
 from datetime import datetime
 import re
 
-parentheses_re = re.compile(r'\(([-+*/ \d]+)\)')
-multiplication_division_re = re.compile(r'(\d+) *([*/]) *(\d+)')
+parentheses_re = re.compile(r'\(([-+*xX/ \d]+)\)')
+multiplication_division_re = re.compile(r'(\d+) *([*xX/]) *(\d+)')
 addition_subtraction_re = re.compile(r'(\d+) *([-+]) *(\d+)')
 expression_start_re = re.compile(r'[( ]*\d')
-expression_simple_re = re.compile(r'^[-+*/ ()\d]+$')
+expression_simple_re = re.compile(r'^[-+*xX/ ()\d]+$')
 number_re = re.compile(r'\d+')
-repeated_operator_re = re.compile(r'[-+*/]\D*[-+*/]')
+repeated_operator_re = re.compile(r'[-+*xX/]\D*[-+*xX/]')
 
 
 class NotIntegerDivision(ValueError):
@@ -47,9 +47,9 @@ def multiply_or_divide(match):
     a = int(match.group(1))
     b = int(match.group(3))
     operator = match.group(2)
-    if operator == "*":
-        return str(multiply(a, b))
-    return str(divide(a, b))
+    if operator == "/":
+        return str(divide(a, b))
+    return str(multiply(a, b))
 
 
 def add_or_subtract(match):
@@ -82,7 +82,7 @@ def calculate(expression):
     return calculate_individual(expression)
 
 
-def is_valid_expression(expression, allowed_numbers):
+def is_valid_expression(expression):
     if not expression_start_re.match(expression):
         return False
     if not expression_simple_re.match(expression):
@@ -97,6 +97,10 @@ def is_valid_expression(expression, allowed_numbers):
             parentheses -= 1
             if parentheses < 0:
                 return False
+    return True
+
+
+def uses_allowed_numbers(expression, allowed_numbers):
     allowed_numbers = {x: allowed_numbers.count(x) for x in allowed_numbers}
     for number in number_re.finditer(expression):
         number = int(number.group(0))
@@ -154,7 +158,7 @@ class GameCog:
         target = random.randint(100, 999)
 
         def is_valid_answer(message):
-            return message.channel == ctx.channel and is_valid_expression(message.content, allowed_numbers)
+            return message.channel == ctx.channel and is_valid_expression(message.content)
 
         remaining_time = 60.0
         await ctx.send(f"Your target is {target}.")
@@ -166,24 +170,28 @@ class GameCog:
                 remaining_time = -1
                 continue
             expression = answer.content
-            try:
-                result = calculate(expression)
-            except NotIntegerDivision:
-                await ctx.send(f"No, {answer.author.display_name}. Only integer divisions are allowed.")
-            except NegativeResult:
-                await ctx.send(f"No, {answer.author.display_name}. The result can't be negative at any point")
-            except ValueError:
-                await ctx.send(f"No, {answer.author.display_name}. That expression is almost valid, but it isn't.")
-            else:
-                if result == target:
-                    await ctx.send(f"That's right, {answer.author.display_name}")
-                    break
+
+            if uses_allowed_numbers(expression, allowed_numbers):
+                try:
+                    result = calculate(expression)
+                except NotIntegerDivision:
+                    await ctx.send(f"No, {answer.author.display_name}. Only integer divisions are allowed.")
+                except NegativeResult:
+                    await ctx.send(f"No, {answer.author.display_name}. The result can't be negative at any point")
+                except ValueError:
+                    await ctx.send(f"No, {answer.author.display_name}. That expression is almost valid, but it isn't.")
                 else:
-                    await ctx.send(f"That's {result}, {answer.author.display_name}, not {target}.")
+                    if result == target:
+                        await ctx.send(f"That's right, {answer.author.display_name}")
+                        break
+                    else:
+                        await ctx.send(f"That's {result}, {answer.author.display_name}, not {target}.")
+            else:
+                await ctx.send(f"No, {answer.author.display_name}. Those numbers aren't allowed.")
 
             remaining_time = 60 - (datetime.utcnow() - question_start).total_seconds()
         if remaining_time <= 0:
-            await ctx.send("Time's up!")
+            await ctx.send(f"Time's up! The answer was {target} lol")
 
 
 def setup(bot):
