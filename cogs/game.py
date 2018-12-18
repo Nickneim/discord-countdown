@@ -1,5 +1,6 @@
 import random
 import asyncio
+import enchant
 from discord.ext import commands
 from datetime import datetime
 import re
@@ -13,6 +14,7 @@ expression_simple_re = re.compile(r'^[-+*xX/ ()\d]+$')
 number_re = re.compile(r'\d+')
 letter_re = re.compile(r'\w+')
 repeated_operator_re = re.compile(r'[-+*xX/]\D*[-+*xX/]')
+dictionary = enchant.Dict("en_GB")
 
 vowels_d = {'a':15, 'e': 21, 'i': 13, 'o': 13, 'u': 5}
 consonants_d = {'b': 2, 'c': 3, 'd': 6, 'f': 2, 'g': 3, 'h': 2,
@@ -104,6 +106,10 @@ def is_valid_expression(expression):
             if parentheses < 0:
                 return False
     return True
+
+
+def is_valid_word(word):
+    return dictionary.check(word)
 
 
 def uses_allowed_numbers(expression, allowed_numbers):
@@ -198,6 +204,8 @@ class GameCog:
                     await ctx.send(f"No, {user}. That expression is almost valid, but it isn't.")
                 else:
                     if result == target:
+                        closest_answer = result
+                        closest_user = user
                         await ctx.send(f"That's right, {user}")
                         break
                     else:
@@ -209,7 +217,7 @@ class GameCog:
                 await ctx.send(f"No, {user}. Those numbers aren't allowed.")
 
             remaining_time = 60 - (datetime.utcnow() - question_start).total_seconds()
-        if remaining_time <= 0:
+        if closest_answer != target:
             if closest_user:
                 await ctx.send(f"Time's up! The closest answer was {closest_answer} by {closest_user}!")
             else:
@@ -227,6 +235,8 @@ class GameCog:
         allowed_letters = []
         vowels_amount = 0
         consonants_amount = 0
+        closest_answer = None
+        closest_user = None
 
         def is_valid_answer(message):
             return (message.channel == ctx.channel and message.author == ctx.message.author and
@@ -259,16 +269,42 @@ class GameCog:
         def is_valid_answer(message):
             return (message.channel == ctx.channel and message.author == ctx.message.author and
                     letter_re.fullmatch(message.content))
-
+        remaining_time = 60.0
         await ctx.send("Now, try to write the longest possible word using only those letters.")
+        question_start = datetime.utcnow()
+        while remaining_time > 0:
+            try:
+                answer = await self.bot.wait_for('message', timeout=remaining_time, check=is_valid_answer)
+            except asyncio.TimeoutError:
+                remaining_time = -1
+                continue
+            word = answer.content.lower()
+            user = answer.author.display_name
 
-        answer = await self.bot.wait_for('message', check=is_valid_answer)
-        word = answer.content.lower()
-        user = answer.author.display_name
-        if uses_allowed_letters(word, allowed_letters):
-            await ctx.send(f"{user}, that word has {len(word)} letters, cool!")
-        else:
-            await ctx.send(f"{user}, you need to use the letters given to you.")
+            if uses_allowed_letters(word, allowed_letters):
+                if is_valid_word(word):
+                    if len(word) == 9:
+                        closest_answer = len(word)
+                        closest_user = user
+                        await ctx.send(f"Woah, {user}, pretty good, you used all letters!")
+                        break
+                    else:
+                        if not closest_answer or len(word) > closest_answer:
+                            closest_answer = len(word)
+                            closest_user = user
+                        await ctx.send(f"{user}, that word has {len(word)} letters, cool!")
+                else:
+                    await ctx.send(f"Nice try {user}, but that's not a word.")
+            else:
+                await ctx.send(f"No, {user}. Those letters aren't allowed.")
+
+            remaining_time = 60 - (datetime.utcnow() - question_start).total_seconds()
+
+        if closest_answer != 9:
+            if closest_user:
+                await ctx.send(f"Time's up! The closest answer word had {closest_answer} letters by {closest_user}!")
+            else:
+                await ctx.send("Time's up! Nobody even tried!")
 
 
 def setup(bot):
