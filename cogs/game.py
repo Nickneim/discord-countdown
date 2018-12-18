@@ -7,10 +7,18 @@ import re
 parentheses_re = re.compile(r'\(([-+*xX/ \d]+)\)')
 multiplication_division_re = re.compile(r'(\d+) *([*xX/]) *(\d+)')
 addition_subtraction_re = re.compile(r'(\d+) *([-+]) *(\d+)')
-expression_start_re = re.compile(r'[( ]*\d')
+expression_start_re = re.compile(r'^[( ]*\d')
+expression_end_re = re.compile(r'\d[) ]*$')
 expression_simple_re = re.compile(r'^[-+*xX/ ()\d]+$')
 number_re = re.compile(r'\d+')
+letter_re = re.compile(r'\w+')
 repeated_operator_re = re.compile(r'[-+*xX/]\D*[-+*xX/]')
+
+vowels_d = {'a':15, 'e': 21, 'i': 13, 'o': 13, 'u': 5}
+consonants_d = {'b': 2, 'c': 3, 'd': 6, 'f': 2, 'g': 3, 'h': 2,
+                'j': 1, 'k': 1, 'l': 5, 'm': 4, 'n': 8, 'p': 4,
+                'q': 1, 'r': 9, 's': 9, 't': 9, 'v': 1, 'w': 1,
+                'x': 1, 'y': 1, 'z': 1}
 
 
 class NotIntegerDivision(ValueError):
@@ -83,12 +91,10 @@ def calculate(expression):
 
 
 def is_valid_expression(expression):
-    if not expression_start_re.match(expression):
+    if not (expression_start_re.match(expression) and expression_end_re.search(expression) and
+            expression_simple_re.match(expression)) or repeated_operator_re.search(expression):
         return False
-    if not expression_simple_re.match(expression):
-        return False
-    if repeated_operator_re.search(expression):
-        return False
+
     parentheses = 0
     for c in expression:
         if c == '(':
@@ -104,11 +110,18 @@ def uses_allowed_numbers(expression, allowed_numbers):
     allowed_numbers = {x: allowed_numbers.count(x) for x in allowed_numbers}
     for number in number_re.finditer(expression):
         number = int(number.group(0))
-        if number not in allowed_numbers:
-            return False
-        if allowed_numbers[number] == 0:
+        if number not in allowed_numbers or allowed_numbers[number] == 0:
             return False
         allowed_numbers[number] -= 1
+    return True
+
+
+def uses_allowed_letters(word, allowed_letters):
+    allowed_letters = {x: allowed_letters.count(x) for x in allowed_letters}
+    for letter in word:
+        if not allowed_letters.get(letter):
+            return False
+        allowed_letters[letter] -= 1
     return True
 
 
@@ -123,6 +136,8 @@ class GameCog:
         small_numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
                          1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         allowed_numbers = []
+        closest_user = None
+        closest_answer = None
 
         def is_valid_number(message):
             if message.channel != ctx.channel or message.author != ctx.message.author:
@@ -133,7 +148,7 @@ class GameCog:
             except ValueError:
                 return len(message.content) < 6 and message.content.lower() in ("zero", "one", "two", "three", "four")
 
-        await ctx.send("How many big numbers?")
+        await ctx.send("How many big numbers? Choose a number between 0 and 4.")
 
         answer = await self.bot.wait_for('message', check=is_valid_number)
         try:
@@ -170,28 +185,90 @@ class GameCog:
                 remaining_time = -1
                 continue
             expression = answer.content
+            user = answer.author.display_name
 
             if uses_allowed_numbers(expression, allowed_numbers):
                 try:
                     result = calculate(expression)
                 except NotIntegerDivision:
-                    await ctx.send(f"No, {answer.author.display_name}. Only integer divisions are allowed.")
+                    await ctx.send(f"No, {user}. Only integer divisions are allowed.")
                 except NegativeResult:
-                    await ctx.send(f"No, {answer.author.display_name}. The result can't be negative at any point")
+                    await ctx.send(f"No, {user}. The result can't be negative at any point")
                 except ValueError:
-                    await ctx.send(f"No, {answer.author.display_name}. That expression is almost valid, but it isn't.")
+                    await ctx.send(f"No, {user}. That expression is almost valid, but it isn't.")
                 else:
                     if result == target:
-                        await ctx.send(f"That's right, {answer.author.display_name}")
+                        await ctx.send(f"That's right, {user}")
                         break
                     else:
-                        await ctx.send(f"That's {result}, {answer.author.display_name}, not {target}.")
+                        if not closest_answer or result < closest_answer:
+                            closest_answer = result
+                            closest_user = user
+                        await ctx.send(f"That's {result}, {user}, not {target}.")
             else:
-                await ctx.send(f"No, {answer.author.display_name}. Those numbers aren't allowed.")
+                await ctx.send(f"No, {user}. Those numbers aren't allowed.")
 
             remaining_time = 60 - (datetime.utcnow() - question_start).total_seconds()
         if remaining_time <= 0:
-            await ctx.send(f"Time's up! The answer was {target} lol")
+            if closest_user:
+                await ctx.send(f"Time's up! The closest answer was {closest_answer} by {closest_user}!")
+            else:
+                await ctx.send("Time's up! Nobody even tried!")
+
+    @commands.command(aliases=["letter", "l"])
+    async def letters(self, ctx):
+        vowels = []
+        for vowel, amount in vowels_d.items():
+            vowels += [vowel] * amount
+        consonants = []
+        for consonant, amount in consonants_d.items():
+            consonants += [consonant] * amount
+
+        allowed_letters = []
+        vowels_amount = 0
+        consonants_amount = 0
+
+        def is_valid_answer(message):
+            return (message.channel == ctx.channel and message.author == ctx.message.author and
+                    message.content.lower() in ('c', 'v', 'vowel', 'consonant'))
+
+        await ctx.send("Take a '**c**onsonant' or a '**v**owel'.")
+
+        uppercase_letters = "-"
+        for i in range(9):
+            if consonants_amount == 6:  # Need at least 3 vowels.
+                answer = 'v'
+            elif vowels_amount == 5:  # Need at least 4 consonants.
+                answer = 'c'
+            else:
+                answer = await self.bot.wait_for('message', check=is_valid_answer)
+                answer = answer.content[0]
+            if answer in ('c', 'C'):
+                consonants_amount += 1
+                new_letter = consonants.pop(random.randint(0, len(consonants)-1))
+            else:
+                vowels_amount += 1
+                new_letter = vowels.pop(random.randint(0, len(vowels)-1))
+            allowed_letters.append(new_letter)
+            if i == 0:
+                uppercase_letters = new_letter.upper()
+            else:
+                uppercase_letters += f", {new_letter.upper()}"
+            await ctx.send(f"The new letter is {new_letter}. Your letters are: {uppercase_letters}")
+
+        def is_valid_answer(message):
+            return (message.channel == ctx.channel and message.author == ctx.message.author and
+                    letter_re.fullmatch(message.content))
+
+        await ctx.send("Now, try to write the longest possible word using only those letters.")
+
+        answer = await self.bot.wait_for('message', check=is_valid_answer)
+        word = answer.content.lower()
+        user = answer.author.display_name
+        if uses_allowed_letters(word, allowed_letters):
+            await ctx.send(f"{user}, that word has {len(word)} letters, cool!")
+        else:
+            await ctx.send(f"{user}, you need to use the letters given to you.")
 
 
 def setup(bot):
