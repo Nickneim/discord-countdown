@@ -1,8 +1,10 @@
 import random
 import asyncio
 import enchant
+import discord
 from discord.ext import commands
 from datetime import datetime
+from itertools import combinations, permutations
 import re
 
 parentheses_re = re.compile(r'\(([-+*xX/ \d]+)\)')
@@ -238,22 +240,25 @@ class GameCog:
         closest_answer = None
         closest_user = None
 
-        def is_valid_answer(message):
-            return (message.channel == ctx.channel and message.author == ctx.message.author and
-                    message.content.lower() in ('c', 'v', 'vowel', 'consonant'))
+        message = await ctx.send("Take a Consonant or a Vowel.")
+        await message.add_reaction('🇨')
+        await message.add_reaction('🇻')
 
-        await ctx.send("Take a '**c**onsonant' or a '**v**owel'.")
+        def is_valid_reaction(reaction, user):
+            return user == ctx.message.author and reaction.message.id == message.id and str(reaction.emoji) in ('🇨', '🇻')
 
         uppercase_letters = "-"
         for i in range(9):
             if consonants_amount == 6:  # Need at least 3 vowels.
-                answer = 'v'
+                answer = '🇻'
+                user = None
             elif vowels_amount == 5:  # Need at least 4 consonants.
-                answer = 'c'
+                answer = '🇨'
+                user = None
             else:
-                answer = await self.bot.wait_for('message', check=is_valid_answer)
-                answer = answer.content[0]
-            if answer in ('c', 'C'):
+                reaction, user = await self.bot.wait_for('reaction_add', check=is_valid_reaction)
+                answer = str(reaction.emoji)
+            if answer == '🇨':
                 consonants_amount += 1
                 new_letter = consonants.pop(random.randint(0, len(consonants)-1))
             else:
@@ -264,12 +269,24 @@ class GameCog:
                 uppercase_letters = new_letter.upper()
             else:
                 uppercase_letters += f", {new_letter.upper()}"
-            await ctx.send(f"The new letter is {new_letter}. Your letters are: {uppercase_letters}")
+            await message.edit(content=f"The new letter is **{new_letter}**. Your letters are:\n{uppercase_letters}")
+            if user:
+                try:
+                    await message.remove_reaction(reaction, user)
+                except discord.Forbidden:
+                    pass
+
+        uppercase_letters = ""
+        for letter in allowed_letters:
+            uppercase_letters += letter.upper()
 
         def is_valid_answer(message):
-            return (message.channel == ctx.channel and message.author == ctx.message.author and
-                    letter_re.fullmatch(message.content))
+            return message.channel == ctx.channel and letter_re.fullmatch(message.content)
         remaining_time = 60.0
+        try:
+            await ctx.message.guild.me.edit(nick=f"Countdown Bot - {uppercase_letters}")
+        except discord.Forbidden:
+            pass
         await ctx.send("Now, try to write the longest possible word using only those letters.")
         question_start = datetime.utcnow()
         while remaining_time > 0:
@@ -289,7 +306,7 @@ class GameCog:
                         await ctx.send(f"Woah, {user}, pretty good, you used all letters!")
                         break
                     else:
-                        if not closest_answer or len(word) > closest_answer:
+                        if not closest_answer or len(word) >     closest_answer:
                             closest_answer = len(word)
                             closest_user = user
                         await ctx.send(f"{user}, that word has {len(word)} letters, cool!")
@@ -302,9 +319,28 @@ class GameCog:
 
         if closest_answer != 9:
             if closest_user:
-                await ctx.send(f"Time's up! The closest answer word had {closest_answer} letters by {closest_user}!")
+                await ctx.send(f"Time's up! The longest word had {closest_answer} letters by {closest_user}!")
             else:
                 await ctx.send("Time's up! Nobody even tried!")
+        try:
+            await ctx.message.guild.me.edit(nick=None)
+        except discord.Forbidden:
+            pass
+
+    @commands.command()
+    async def longest(self, ctx, letters: str):
+        if not letter_re.fullmatch(letters):
+            await ctx.send("Not a valid word!")
+        if len(letters) > 9:
+            await ctx.send("That feels like too much, no thanks.")
+        for i in range(len(letters), 0, -1):
+            for c in combinations(letters, i):
+                for p in permutations(c):
+                    word = ''.join(p)
+                    if dictionary.check(word):
+                        await ctx.send(word)
+                        return
+        await ctx.send("There's no word that uses those letters!")
 
 
 def setup(bot):
