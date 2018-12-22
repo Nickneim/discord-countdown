@@ -331,16 +331,34 @@ class GameCog:
     async def longest(self, ctx, letters: str):
         if not letter_re.fullmatch(letters):
             await ctx.send("Not a valid word!")
+            return
         if len(letters) > 9:
             await ctx.send("That feels like too much, no thanks.")
+            return
+        letters = letters.lower()
         for i in range(len(letters), 0, -1):
             for c in combinations(letters, i):
                 for p in permutations(c):
                     word = ''.join(p)
-                    if dictionary.check(word):
+                    if dictionary.check(word) and word != letters:
                         await ctx.send(word)
                         return
         await ctx.send("There's no word that uses those letters!")
+
+    @commands.command()
+    async def anagrams(self, ctx, letters: str):
+        if not letter_re.fullmatch(letters):
+            await ctx.send("Not a valid word!")
+            return
+        if len(letters) > 9:
+            await ctx.send("That feels like too much, no thanks.")
+            return
+        letters = letters.lower()
+        async with ctx.typing():
+            for p in permutations(letters):
+                word = ''.join(p)
+                if dictionary.check(word) and word != letters:
+                    await ctx.send(word)
 
 
 def setup(bot):
