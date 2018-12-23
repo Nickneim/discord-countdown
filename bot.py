@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 
 from sys import stderr
+import os
 import traceback
 
 initial_extensions = ['cogs.game',
@@ -27,8 +28,4 @@ async def on_ready():
 
     print(f'Successfully logged in and booted...!')
 
-
-with open('token.txt') as f:
-    TOKEN = f.read()
-
-bot.run(TOKEN, bot=True, reconnect=True)
+bot.run(os.environ['TOKEN'], bot=True, reconnect=True)
