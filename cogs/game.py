@@ -1,10 +1,10 @@
 import random
 import asyncio
-import enchant
+import aiohttp
 import discord
 from discord.ext import commands
 from datetime import datetime
-from itertools import combinations, permutations
+import os
 import re
 
 parentheses_re = re.compile(r'\(([-+*xX/ \d]+)\)')
@@ -16,13 +16,28 @@ expression_simple_re = re.compile(r'^[-+*xX/ ()\d]+$')
 number_re = re.compile(r'\d+')
 letter_re = re.compile(r'\w+')
 repeated_operator_re = re.compile(r'[-+*xX/]\D*[-+*xX/]')
-dictionary = enchant.Dict("en_GB")
+oxford_headers = {'app_id': os.environ['OXFORD_ID'], 'app_key': os.environ['OXFORD_KEY']}
 
 vowels_d = {'a':15, 'e': 21, 'i': 13, 'o': 13, 'u': 5}
 consonants_d = {'b': 2, 'c': 3, 'd': 6, 'f': 2, 'g': 3, 'h': 2,
                 'j': 1, 'k': 1, 'l': 5, 'm': 4, 'n': 8, 'p': 4,
                 'q': 1, 'r': 9, 's': 9, 't': 9, 'v': 1, 'w': 1,
                 'x': 1, 'y': 1, 'z': 1}
+
+
+async def word_exists(session, word):
+    async with session.get('https://od-api.oxforddictionaries.com/api/v1/inflections/en/' + word,
+                           headers=oxford_headers) as r:
+        if r.status == 200:
+            js = await r.json()
+            for result in js['results']:
+                for entry in result['lexicalEntries']:
+                    for inflection_of in entry['inflectionOf']:
+                        if inflection_of['text'][0].islower():
+                            return True
+            return False
+        else:
+            return False
 
 
 class NotIntegerDivision(ValueError):
@@ -110,10 +125,6 @@ def is_valid_expression(expression):
     return True
 
 
-def is_valid_word(word):
-    return dictionary.check(word)
-
-
 def uses_allowed_numbers(expression, allowed_numbers):
     allowed_numbers = {x: allowed_numbers.count(x) for x in allowed_numbers}
     for number in number_re.finditer(expression):
@@ -137,6 +148,7 @@ class GameCog:
 
     def __init__(self, bot):
         self.bot = bot
+        self.session = aiohttp.ClientSession(loop=bot.loop)
 
     @commands.command(aliases=["number", "n"])
     async def numbers(self, ctx):
@@ -148,7 +160,7 @@ class GameCog:
         closest_answer = None
 
         def is_valid_number(message):
-            if message.channel != ctx.channel or message.author != ctx.message.author:
+            if message.channel != ctx.channel or message.author != ctx.author:
                 return False
             try:
                 number = int(message.content)
@@ -245,7 +257,7 @@ class GameCog:
         await message.add_reaction('🇻')
 
         def is_valid_reaction(reaction, user):
-            return user == ctx.message.author and reaction.message.id == message.id and str(reaction.emoji) in ('🇨', '🇻')
+            return user == ctx.author and reaction.message.id == message.id and str(reaction.emoji) in ('🇨', '🇻')
 
         uppercase_letters = "-"
         for i in range(9):
@@ -283,10 +295,11 @@ class GameCog:
         def is_valid_answer(message):
             return message.channel == ctx.channel and letter_re.fullmatch(message.content)
         remaining_time = 60.0
-        try:
-            await ctx.message.guild.me.edit(nick=f"Countdown Bot - {uppercase_letters}")
-        except discord.Forbidden:
-            pass
+        if ctx.guild:
+            try:
+                await ctx.guild.me.edit(nick=f"Countdown Bot - {uppercase_letters}")
+            except discord.Forbidden:
+                pass
         await ctx.send("Now, try to write the longest possible word using only those letters.")
         question_start = datetime.utcnow()
         while remaining_time > 0:
@@ -299,14 +312,14 @@ class GameCog:
             user = answer.author.display_name
 
             if uses_allowed_letters(word, allowed_letters):
-                if is_valid_word(word):
+                if await word_exists(self.session, word):
                     if len(word) == 9:
                         closest_answer = len(word)
                         closest_user = user
                         await ctx.send(f"Woah, {user}, pretty good, you used all letters!")
                         break
                     else:
-                        if not closest_answer or len(word) >     closest_answer:
+                        if not closest_answer or len(word) > closest_answer:
                             closest_answer = len(word)
                             closest_user = user
                         await ctx.send(f"{user}, that word has {len(word)} letters, cool!")
@@ -322,43 +335,11 @@ class GameCog:
                 await ctx.send(f"Time's up! The longest word had {closest_answer} letters by {closest_user}!")
             else:
                 await ctx.send("Time's up! Nobody even tried!")
-        try:
-            await ctx.message.guild.me.edit(nick=None)
-        except discord.Forbidden:
-            pass
-
-    @commands.command()
-    async def longest(self, ctx, letters: str):
-        if not letter_re.fullmatch(letters):
-            await ctx.send("Not a valid word!")
-            return
-        if len(letters) > 9:
-            await ctx.send("That feels like too much, no thanks.")
-            return
-        letters = letters.lower()
-        for i in range(len(letters), 0, -1):
-            for c in combinations(letters, i):
-                for p in permutations(c):
-                    word = ''.join(p)
-                    if dictionary.check(word) and word != letters:
-                        await ctx.send(word)
-                        return
-        await ctx.send("There's no word that uses those letters!")
-
-    @commands.command()
-    async def anagrams(self, ctx, letters: str):
-        if not letter_re.fullmatch(letters):
-            await ctx.send("Not a valid word!")
-            return
-        if len(letters) > 9:
-            await ctx.send("That feels like too much, no thanks.")
-            return
-        letters = letters.lower()
-        async with ctx.typing():
-            for p in permutations(letters):
-                word = ''.join(p)
-                if dictionary.check(word) and word != letters:
-                    await ctx.send(word)
+        if ctx.guild:
+            try:
+                await ctx.guild.me.edit(nick=None)
+            except discord.Forbidden:
+                pass
 
 
 def setup(bot):
